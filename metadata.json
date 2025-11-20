@@ -1,0 +1,5 @@
+{
+  "name": "ExamGenius Farsi (آزمون‌ساز هوشمند)",
+  "description": "An AI-powered exam generator that creates professional exam papers from text or URLs with descriptive feedback and learning objectives. Optimized for Persian language.",
+  "requestFramePermissions": []
+}
