@@ -32,11 +32,32 @@ export interface EvaluationTableItem {
   objective: string;
 }
 
+export interface ExamLabels {
+    school: string;
+    course: string;
+    grade: string;
+    name: string;
+    date: string;
+    time: string;
+    page: string;
+    teacherFeedback: string;
+    parentFeedback: string;
+    signature: string;
+}
+
+export interface ExamStyle {
+    fontFamily: string;
+    fontSize: 'small' | 'medium' | 'large';
+    textAlign: 'right' | 'center' | 'left' | 'justify';
+}
+
 export interface ExamPaper {
   header: ExamHeader;
   questions: Question[];
   evaluationTable: EvaluationTableItem[];
   pageCount: number; // Total number of pages to render
+  labels?: ExamLabels;
+  style?: ExamStyle;
 }
 
 export interface GenerationConfig {
