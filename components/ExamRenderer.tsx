@@ -8,6 +8,7 @@ interface ExamRendererProps {
   onUpdateExam: (exam: ExamPaper) => void;
   onRegenerateQuestion: (qId: number, newDifficulty: Difficulty) => void;
   refProp?: React.Ref<HTMLDivElement>;
+  questionSpacing?: number;
 }
 
 const TYPE_ORDER: QuestionType[] = [
@@ -33,7 +34,8 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
     isEditing, 
     onUpdateExam, 
     onRegenerateQuestion,
-    refProp 
+    refProp,
+    questionSpacing = 5
 }) => {
 
   const updateHeader = (field: string, value: string | number) => {
@@ -51,15 +53,27 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
   };
 
   const moveQuestionPage = (id: number, direction: 'next' | 'prev') => {
+      let newMaxPage = exam.pageCount || 1;
       const newQuestions = exam.questions.map(q => {
           if (q.id === id) {
               const currentPage = q.page || 1;
               const newPage = direction === 'next' ? currentPage + 1 : Math.max(1, currentPage - 1);
+              
+              // If moving to a new page beyond current count, update the count
+              if (newPage > newMaxPage) {
+                  newMaxPage = newPage;
+              }
+              
               return { ...q, page: newPage };
           }
           return q;
       });
-      onUpdateExam({ ...exam, questions: newQuestions });
+      
+      onUpdateExam({ 
+          ...exam, 
+          questions: newQuestions,
+          pageCount: newMaxPage
+      });
   };
 
   const deleteQuestion = (id: number) => {
@@ -94,137 +108,168 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
       return pageMap;
   }, [exam.questions]);
 
-  const pageNumbers = Object.keys(pages).map(Number).sort((a,b) => a - b);
+  // Calculate max page based on configuration and existing questions
+  const maxPageWithQuestions = Math.max(0, ...Object.keys(pages).map(Number));
+  const totalRenderPages = Math.max(exam.pageCount || 1, maxPageWithQuestions);
+  const pageNumbers = Array.from({ length: totalRenderPages }, (_, i) => i + 1);
   
   // Global counter needs to persist across pages
   let globalQuestionIndex = 0;
 
   return (
     <div 
-        className="w-full flex flex-col items-center gap-8 bg-gray-200 p-4 md:p-8 overflow-auto print:overflow-visible print:p-0 print:bg-white print:block print:h-auto" 
+        className="w-full flex flex-col items-center gap-8 overflow-x-auto exam-scroll-container print:overflow-visible print:block print:h-auto" 
+        id="exam-wrapper"
         ref={refProp}
     >
       
       {pageNumbers.map((pageNum, pageIndex) => {
-        const pageQuestions = pages[pageNum];
+        const pageQuestions = pages[pageNum] || [];
         const groupedQuestions: Partial<Record<QuestionType, Question[]>> = {};
+        
+        // Populate grouped questions if any exist on this page
         pageQuestions.forEach(q => {
             if (!groupedQuestions[q.type]) groupedQuestions[q.type] = [];
             groupedQuestions[q.type]!.push(q);
         });
 
-        const isLastPage = pageIndex === pageNumbers.length - 1;
-
         return (
             <div 
                 key={pageNum}
-                className="bg-white shadow-2xl print:shadow-none relative border-4 border-double border-gray-800 print:border-4 print:border-gray-800 page-container mx-auto print:mx-0 print:w-full print:break-after-page"
-                style={{ 
-                    width: '210mm', 
-                    minHeight: '297mm',
-                    padding: '10mm',
-                    boxSizing: 'border-box',
-                    display: 'flex',
-                    flexDirection: 'column'
-                }} 
+                className="sheet font-sans" 
+                // The .sheet class now handles the A4 dimensions and padding directly
             >
-                {/* Header - Aligned as requested */}
-                {pageNum === 1 && (
-                    <div className="border-2 border-gray-800 rounded-lg mb-6 p-4 text-sm">
-                        <div className="flex flex-col gap-4">
-                            {/* Row 1 */}
-                            <div className="flex justify-between items-center">
-                                <div className="flex items-center gap-2 min-w-[200px]">
-                                    <span className="font-bold">نام آموزشگاه:</span>
-                                    {isEditing ? (
-                                        <input 
-                                            className="border-b border-gray-400 px-1 w-full focus:outline-none" 
-                                            value={exam.header.schoolName}
-                                            onChange={(e) => updateHeader('schoolName', e.target.value)}
-                                        />
-                                    ) : (
-                                        <span className="font-medium">{exam.header.schoolName || '................'}</span>
-                                    )}
-                                </div>
-                                <div className="flex items-center gap-2 min-w-[200px] justify-end">
-                                    <span className="font-bold">نام درس:</span>
-                                    {isEditing ? (
-                                        <input 
-                                            className="border-b border-gray-400 px-1 w-32 focus:outline-none" 
-                                            value={exam.header.title}
-                                            onChange={(e) => updateHeader('title', e.target.value)}
-                                        />
-                                    ) : (
-                                        <span className="font-medium">{exam.header.title}</span>
-                                    )}
-                                </div>
-                            </div>
-                            
-                            {/* Row 2 */}
-                            <div className="flex justify-between items-end">
-                                <div className="flex items-center gap-2 min-w-[200px]">
-                                    <span className="font-bold">نام و نام خانوادگی:</span>
-                                    <span>..................................</span>
-                                </div>
-                                
-                                <div className="flex items-center gap-2">
-                                    <span className="font-bold">پایه / کلاس:</span>
-                                    {isEditing ? (
-                                        <input 
-                                            className="border-b border-gray-400 px-1 w-20 focus:outline-none text-center" 
-                                            value={exam.header.grade}
-                                            onChange={(e) => updateHeader('grade', e.target.value)}
-                                        />
-                                    ) : (
-                                        <span className="font-medium">{exam.header.grade || '........'}</span>
-                                    )}
+                <div className="flex flex-col h-full box-border">
+                
+                {/* Header - Redesigned for Professional Look (Only on Page 1) */}
+                {pageNum === 1 ? (
+                    <div className="mb-8 font-sans text-gray-900">
+                        <div className="border-2 border-gray-800 rounded-xl p-1">
+                            <div className="border border-gray-800 rounded-lg p-4 bg-white relative">
+                                {/* Decor */}
+                                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white px-4 z-10">
+                                    <span className="font-bold text-xl">بسمه تعالی</span>
                                 </div>
 
-                                <div className="flex flex-col items-end gap-1 min-w-[200px]">
-                                     <div className="flex items-center gap-2">
-                                        <span className="font-bold">تاریخ آزمون:</span>
-                                        <span dir="ltr">14__/ __ / __</span>
-                                     </div>
-                                     <div className="flex items-center gap-2">
-                                        <span className="font-bold">مدت آزمون:</span>
-                                        {isEditing ? (
-                                            <input 
-                                                className="border-b border-gray-400 px-1 w-10 focus:outline-none text-center" 
-                                                value={exam.header.durationMinutes}
-                                                onChange={(e) => updateHeader('durationMinutes', e.target.value)}
-                                            />
-                                        ) : (
-                                            <span className="font-medium">{exam.header.durationMinutes}</span>
-                                        )}
-                                        <span>دقیقه</span>
-                                     </div>
+                                <div className="grid grid-cols-12 gap-4 pt-2">
+                                    {/* Right Section */}
+                                    <div className="col-span-4 flex flex-col justify-between gap-3 text-sm border-l border-gray-300 pl-4">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold whitespace-nowrap">نام آموزشگاه:</span>
+                                            {isEditing ? (
+                                                <input 
+                                                    className="w-full border-b border-dotted border-gray-400 focus:outline-none bg-transparent text-right" 
+                                                    value={exam.header.schoolName}
+                                                    onChange={(e) => updateHeader('schoolName', e.target.value)}
+                                                />
+                                            ) : (
+                                                <span className="font-medium truncate">{exam.header.schoolName || '....................'}</span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold whitespace-nowrap">نام درس:</span>
+                                            {isEditing ? (
+                                                <input 
+                                                    className="w-full border-b border-dotted border-gray-400 focus:outline-none bg-transparent text-right" 
+                                                    value={exam.header.title}
+                                                    onChange={(e) => updateHeader('title', e.target.value)}
+                                                />
+                                            ) : (
+                                                <span className="font-medium truncate">{exam.header.title}</span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold whitespace-nowrap">پایه/کلاس:</span>
+                                            {isEditing ? (
+                                                <input 
+                                                    className="w-full border-b border-dotted border-gray-400 focus:outline-none bg-transparent text-right" 
+                                                    value={exam.header.grade}
+                                                    onChange={(e) => updateHeader('grade', e.target.value)}
+                                                />
+                                            ) : (
+                                                <span className="font-medium truncate">{exam.header.grade || '....................'}</span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Center Section (Name) */}
+                                    <div className="col-span-4 flex flex-col justify-center gap-4 text-sm">
+                                        <div className="flex flex-col gap-2 w-full">
+                                            <span className="font-bold">نام و نام خانوادگی:</span>
+                                            <div className="w-full border-b-2 border-dotted border-gray-400 h-6"></div>
+                                        </div>
+                                        <div className="flex flex-col gap-2 w-full">
+                                            <span className="font-bold">شماره کلاس/صندلی:</span>
+                                            <div className="w-full border-b-2 border-dotted border-gray-400 h-6"></div>
+                                        </div>
+                                    </div>
+
+                                    {/* Left Section */}
+                                    <div className="col-span-4 flex flex-col justify-between gap-3 text-sm border-r border-gray-300 pr-4">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold whitespace-nowrap">تاریخ آزمون:</span>
+                                            <span className="font-medium font-mono" dir="ltr">14__/___/___</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold whitespace-nowrap">مدت آزمون:</span>
+                                            {isEditing ? (
+                                                <input 
+                                                    className="w-12 text-center border-b border-dotted border-gray-400 focus:outline-none bg-transparent" 
+                                                    value={exam.header.durationMinutes}
+                                                    onChange={(e) => updateHeader('durationMinutes', e.target.value)}
+                                                />
+                                            ) : (
+                                                <span className="font-medium">{exam.header.durationMinutes}</span>
+                                            )}
+                                            <span className="text-xs">دقیقه</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold whitespace-nowrap">صفحه:</span>
+                                            <span className="font-medium">{totalRenderPages} صفحه</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
+                ) : (
+                   // Minimal Header for subsequent pages
+                   <div className="border-b-2 border-gray-800 pb-2 mb-6 flex justify-between items-center text-xs text-gray-600 keep-together font-sans">
+                       <span className="font-bold text-gray-800">{exam.header.title} - صفحه {pageNum} از {totalRenderPages}</span>
+                       <span>نام و نام خانوادگی: ......................................................</span>
+                   </div>
                 )}
                 
                 {/* Page Content Area */}
                 <div className="flex-grow space-y-4">
+                    {pageQuestions.length === 0 && (
+                        <div className="w-full h-full flex items-center justify-center text-gray-300 border-2 border-dashed border-gray-200 rounded-lg font-sans">
+                            {isEditing ? "صفحه خالی (سوالات را اینجا منتقل کنید)" : ""}
+                        </div>
+                    )}
+
                     {TYPE_ORDER.map((type) => {
                         const questions = groupedQuestions[type];
                         if (!questions || questions.length === 0) return null;
 
                         return (
-                            <div key={type} className="border border-gray-400 rounded-lg overflow-hidden">
+                            <div key={type} className="border border-gray-400 rounded-lg overflow-hidden keep-together">
                                 {/* Section Header */}
-                                <div className="bg-gray-100 px-3 py-1 border-b border-gray-400 text-sm font-bold text-gray-800 flex justify-between items-center">
+                                <div className="bg-gray-100 px-3 py-1 border-b border-gray-400 text-sm font-bold text-gray-800 flex justify-between items-center keep-together font-sans">
                                     <span className="flex items-center gap-2">
                                         <span className="w-2 h-2 bg-gray-800 rounded-sm"></span>
                                         {SECTION_TITLES[type]}
                                     </span>
                                 </div>
 
-                                <div className="p-3 space-y-5">
+                                <div 
+                                    className="p-3 flex flex-col" 
+                                    style={{ gap: `${questionSpacing * 0.25}rem` }}
+                                >
                                     {questions.map((q) => {
                                         globalQuestionIndex++;
                                         return (
-                                            <div key={q.id} className="relative group">
+                                            <div key={q.id} className="relative group keep-together">
                                                 {/* Editing Controls */}
                                                 {isEditing && (
                                                     <div className="absolute -right-12 top-0 flex flex-col gap-1 print:hidden opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -241,7 +286,7 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
                                                             <button className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200">
                                                                 <RefreshCw size={14} />
                                                             </button>
-                                                            <div className="absolute right-full top-0 hidden group-hover/diff:flex bg-white shadow-lg border rounded ml-1 z-10 w-24 flex-col">
+                                                            <div className="absolute right-full top-0 hidden group-hover/diff:flex bg-white shadow-lg border rounded ml-1 z-10 w-24 flex-col font-sans">
                                                                 <button onClick={() => onRegenerateQuestion(q.id, 'Easy')} className="px-2 py-1 text-xs hover:bg-gray-100 text-right">آسان</button>
                                                                 <button onClick={() => onRegenerateQuestion(q.id, 'Medium')} className="px-2 py-1 text-xs hover:bg-gray-100 text-right">متوسط</button>
                                                                 <button onClick={() => onRegenerateQuestion(q.id, 'Hard')} className="px-2 py-1 text-xs hover:bg-gray-100 text-right">دشوار</button>
@@ -253,7 +298,7 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
                                                 <div className="flex items-start gap-2">
                                                     {/* Question Number & Score */}
                                                     <div className="flex flex-col items-center gap-1 pt-1">
-                                                        <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center bg-black text-white rounded-full text-[10px] font-bold">
+                                                        <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center bg-black text-white rounded-full text-[10px] font-bold font-sans">
                                                             {globalQuestionIndex}
                                                         </span>
                                                         <div className="w-6 h-6 border border-gray-600 bg-white rounded-[2px]"></div>
@@ -263,13 +308,13 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
                                                         <div className="flex justify-between items-start gap-2">
                                                             {isEditing ? (
                                                                 <textarea 
-                                                                    className="w-full p-1 border border-gray-300 rounded focus:border-indigo-500 focus:ring-1 text-sm bg-gray-50"
+                                                                    className="w-full p-1 border border-gray-300 rounded focus:border-indigo-500 focus:ring-1 text-base bg-gray-50 font-sans leading-7"
                                                                     value={q.text}
                                                                     onChange={(e) => updateQuestion(q.id, 'text', e.target.value)}
                                                                     rows={2}
                                                                 />
                                                             ) : (
-                                                                <h3 className="font-medium text-sm text-justify leading-6">{q.text}</h3>
+                                                                <h3 className="font-sans font-medium text-base text-justify leading-8 text-gray-900">{q.text}</h3>
                                                             )}
                                                         </div>
                                                         
@@ -278,33 +323,33 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
                                                             {q.type === QuestionType.MULTIPLE_CHOICE && q.options && (
                                                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 mt-2">
                                                                     {q.options.map((opt, i) => (
-                                                                        <div key={i} className="flex items-center gap-2 text-xs">
+                                                                        <div key={i} className="flex items-center gap-2 text-sm font-sans text-gray-800">
                                                                             <div className="w-3 h-3 border border-gray-500 rounded-full flex-shrink-0"></div>
                                                                             {isEditing ? (
-                                                                                <input className="border-b border-gray-200 w-full bg-transparent text-xs" value={opt} onChange={(e) => updateOption(q.id, i, e.target.value)}/>
+                                                                                <input className="border-b border-gray-200 w-full bg-transparent text-sm font-sans" value={opt} onChange={(e) => updateOption(q.id, i, e.target.value)}/>
                                                                             ) : <span>{opt}</span>}
                                                                         </div>
                                                                     ))}
-                                                                    {isEditing && <button onClick={() => addOption(q.id)} className="text-xs text-blue-600 flex items-center gap-1 print:hidden"><Plus size={12}/> گزینه</button>}
+                                                                    {isEditing && <button onClick={() => addOption(q.id)} className="text-xs text-blue-600 flex items-center gap-1 print:hidden font-sans"><Plus size={12}/> گزینه</button>}
                                                                 </div>
                                                             )}
                                                             {q.type === QuestionType.TRUE_FALSE && (
-                                                                <div className="flex gap-6 text-xs mt-2"><span className="flex items-center gap-1">⬜ صحیح</span><span className="flex items-center gap-1">⬜ غلط</span></div>
+                                                                <div className="flex gap-6 text-sm mt-2 font-sans"><span className="flex items-center gap-1">⬜ صحیح</span><span className="flex items-center gap-1">⬜ غلط</span></div>
                                                             )}
                                                             {q.type === QuestionType.MATCHING && q.pairs && (
-                                                                <div className="flex justify-between gap-8 mt-2 text-xs w-11/12 mx-auto">
-                                                                    <div className="flex flex-col gap-2">{q.pairs.map((p, i) => (<div key={i} className="flex items-center gap-2"><span className="w-4 h-4 border border-gray-500 rounded-full flex items-center justify-center text-[9px]">{i + 1}</span><span>{p.right}</span></div>))}</div>
-                                                                    <div className="flex flex-col gap-2">{q.pairs.map((p, i) => (<div key={i} className="flex items-center gap-2"><span className="w-4 h-4 border border-gray-500 rounded-full flex items-center justify-center text-[9px] opacity-50"></span><span>{p.left}</span></div>))}</div>
+                                                                <div className="flex justify-between gap-8 mt-2 text-sm font-sans w-11/12 mx-auto">
+                                                                    <div className="flex flex-col gap-2">{q.pairs.map((p, i) => (<div key={i} className="flex items-center gap-2"><span className="w-4 h-4 border border-gray-500 rounded-full flex items-center justify-center text-[10px]">{i + 1}</span><span>{p.right}</span></div>))}</div>
+                                                                    <div className="flex flex-col gap-2">{q.pairs.map((p, i) => (<div key={i} className="flex items-center gap-2"><span className="w-4 h-4 border border-gray-500 rounded-full flex items-center justify-center text-[10px] opacity-50"></span><span>{p.left}</span></div>))}</div>
                                                                 </div>
                                                             )}
                                                             {(q.type === QuestionType.SHORT_ANSWER || q.type === QuestionType.FILL_IN_THE_BLANK) && (
-                                                                <div className="mt-2 border-b border-dotted border-gray-400 w-full h-5"></div>
+                                                                <div className="mt-2 border-b border-dotted border-gray-400 w-full h-6"></div>
                                                             )}
                                                             {q.type === QuestionType.LONG_ANSWER && (
-                                                                <div className="mt-1 space-y-3">
-                                                                    <div className="border-b border-gray-300 w-full h-5"></div>
-                                                                    <div className="border-b border-gray-300 w-full h-5"></div>
-                                                                    <div className="border-b border-gray-300 w-full h-5"></div>
+                                                                <div className="mt-1 space-y-4">
+                                                                    <div className="border-b border-gray-300 w-full h-6"></div>
+                                                                    <div className="border-b border-gray-300 w-full h-6"></div>
+                                                                    <div className="border-b border-gray-300 w-full h-6"></div>
                                                                 </div>
                                                             )}
                                                         </div>
@@ -320,7 +365,7 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
                 </div>
 
                 {/* Footer / Evaluation Table */}
-                <div className="mt-auto pt-2 border-t-2 border-gray-900">
+                <div className="mt-auto pt-2 border-t-2 border-gray-900 keep-together font-sans">
                      <div className="flex flex-col md:flex-row gap-3">
                         {/* Learning Objectives Table */}
                         <div className="flex-grow">
@@ -374,6 +419,7 @@ export const ExamRenderer: React.FC<ExamRendererProps> = ({
                             </div>
                         </div>
                     </div>
+                </div>
                 </div>
             </div>
         );

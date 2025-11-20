@@ -172,8 +172,9 @@ export const generateExam = async (config: GenerationConfig): Promise<ExamPaper>
 
     const result = parseJSONSafe(text) as ExamPaper;
 
-    // Post-process to assign default page 1
+    // Post-process to assign default page 1 and set page count
     result.questions = result.questions.map(q => ({ ...q, page: 1 }));
+    result.pageCount = config.pageCount || 1;
     
     return result;
 

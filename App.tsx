@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { generateExam, regenerateQuestion } from './services/geminiService';
 import { ExamPaper, GenerationConfig, QuestionType, Difficulty, Question } from './types';
 import { ExamRenderer } from './components/ExamRenderer';
-import { BookOpen, Link, FileText, Settings, Printer, Sparkles, AlertCircle, Edit3, Plus, Check, Save, FolderOpen, Upload, Image as ImageIcon } from 'lucide-react';
+import { BookOpen, Link, FileText, Settings, Printer, Sparkles, AlertCircle, Edit3, Plus, Check, Save, FolderOpen, Upload, Image as ImageIcon, Download, Eye, X, FilePlus, FileMinus } from 'lucide-react';
 
 const INITIAL_COUNTS: Record<QuestionType, number> = {
   [QuestionType.MULTIPLE_CHOICE]: 4,
@@ -17,7 +17,8 @@ const INITIAL_CONFIG: GenerationConfig = {
   sourceType: 'TEXT',
   content: '',
   difficulty: 'Medium',
-  questionCounts: INITIAL_COUNTS
+  questionCounts: INITIAL_COUNTS,
+  pageCount: 1
 };
 
 const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
@@ -36,6 +37,11 @@ function App() {
   const [exam, setExam] = useState<ExamPaper | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [addQuestionType, setAddQuestionType] = useState<QuestionType>(QuestionType.SHORT_ANSWER);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [questionSpacing, setQuestionSpacing] = useState<number>(5);
+  
   const examRef = useRef<HTMLDivElement>(null);
 
   const handleGenerate = async () => {
@@ -77,6 +83,85 @@ function App() {
     window.print();
   };
 
+  const togglePdfMode = (enable: boolean) => {
+    const el = document.getElementById('exam-wrapper');
+    if (el) {
+        if (enable) el.classList.add('pdf-mode');
+        else el.classList.remove('pdf-mode');
+    }
+  };
+
+  const getPdfOptions = (filename: string) => ({
+    margin: 0, 
+    filename: filename,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { 
+        scale: 2, 
+        useCORS: true, 
+        scrollY: 0,
+        letterRendering: true,
+    },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: 'css' }
+  });
+
+  const processPdf = async (action: 'save' | 'preview') => {
+    const sheets = document.querySelectorAll('.sheet');
+    if (!sheets.length) return;
+    
+    setIsGeneratingPdf(true);
+    togglePdfMode(true);
+
+    try {
+        // @ts-ignore
+        if (window.html2pdf) {
+            const filename = action === 'save' 
+                ? `exam-${new Date().toISOString().split('T')[0]}.pdf`
+                : 'preview.pdf';
+                
+            const opt = getPdfOptions(filename);
+            
+            // Create worker with the first sheet
+            // @ts-ignore
+            let worker = window.html2pdf().set(opt).from(sheets[0]).toPdf();
+
+            // Chain subsequent sheets as new pages
+            for (let i = 1; i < sheets.length; i++) {
+                worker = worker.get('pdf').then((pdf: any) => {
+                    pdf.addPage();
+                }).from(sheets[i]).toContainer().toCanvas().toPdf();
+            }
+            
+            if (action === 'save') {
+                await worker.save();
+            } else {
+                const pdfBlobUrl = await worker.output('bloburl');
+                setPreviewUrl(pdfBlobUrl);
+                setShowPreviewModal(true);
+            }
+        } else {
+            alert("کتابخانه PDF بارگیری نشده است.");
+        }
+    } catch (err) {
+        console.error(err);
+        alert("خطا در پردازش PDF");
+    } finally {
+        togglePdfMode(false);
+        setIsGeneratingPdf(false);
+    }
+  };
+
+  const handleDownloadPDF = () => processPdf('save');
+  const handlePreviewPDF = () => processPdf('preview');
+
+  const closePreview = () => {
+      setShowPreviewModal(false);
+      if (previewUrl) {
+          URL.revokeObjectURL(previewUrl);
+          setPreviewUrl(null);
+      }
+  };
+
   const handleAddQuestion = () => {
       if (!exam) return;
       const newId = Math.max(...exam.questions.map(q => q.id), 0) + 1;
@@ -91,7 +176,6 @@ function App() {
           page: lastPage
       };
 
-      // Initialize specific fields based on type
       switch(addQuestionType) {
           case QuestionType.MULTIPLE_CHOICE:
               newQuestion.options = ['گزینه ۱', 'گزینه ۲', 'گزینه ۳', 'گزینه ۴'];
@@ -115,6 +199,12 @@ function App() {
           ...exam,
           questions: [...exam.questions, newQuestion]
       });
+  };
+
+  const updatePageCount = (delta: number) => {
+      if (!exam) return;
+      const newCount = Math.max(1, (exam.pageCount || 1) + delta);
+      setExam({ ...exam, pageCount: newCount });
   };
 
   const handleRegenerateQuestion = async (qId: number, newDifficulty: Difficulty) => {
@@ -209,10 +299,79 @@ function App() {
   const totalQuestions = (Object.values(config.questionCounts) as number[]).reduce((a, b) => a + b, 0);
 
   return (
-    <div className="min-h-screen bg-gray-100 pb-12">
-      
-      {/* Header / Nav */}
-      <nav className="bg-indigo-700 text-white shadow-md print:hidden">
+    <div className="min-h-screen bg-gray-100 pb-12 font-sans">
+      <style>{`
+        .sheet {
+            width: 210mm;
+            min-height: 297mm;
+            padding: 15mm;
+            margin: 10mm auto;
+            background: white;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+            position: relative;
+            box-sizing: border-box;
+            direction: rtl;
+            overflow: hidden;
+        }
+
+        .keep-together {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+
+        tr {
+            page-break-inside: avoid;
+        }
+
+        .pdf-mode {
+            background-color: white !important;
+            width: 210mm !important;
+            margin: 0 auto !important;
+            padding: 0 !important;
+            display: block !important;
+        }
+        
+        #exam-wrapper.pdf-mode {
+            gap: 0 !important;
+        }
+
+        .pdf-mode .sheet {
+            margin: 0 !important;
+            box-shadow: none !important;
+            width: 210mm !important; 
+            height: 297mm !important;
+            padding: 15mm !important;
+            page-break-after: always;
+            break-after: page;
+        }
+
+        .pdf-mode .sheet:last-child {
+            page-break-after: auto;
+            break-after: auto;
+        }
+
+        .pdf-mode button, .pdf-mode .print\\:hidden, .pdf-mode .group-hover\\:opacity-100 {
+            display: none !important;
+        }
+
+        .pdf-mode input, .pdf-mode textarea {
+            border: none !important;
+            background: transparent !important;
+            resize: none !important;
+            padding: 0 !important;
+        }
+
+        .exam-scroll-container::-webkit-scrollbar {
+            height: 10px;
+            width: 10px;
+        }
+        .exam-scroll-container::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 5px;
+        }
+      `}</style>
+
+      <nav className="bg-indigo-700 text-white shadow-md print:hidden z-30 relative">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <Sparkles className="w-6 h-6 text-yellow-300" />
@@ -224,10 +383,8 @@ function App() {
 
       <main className="max-w-7xl mx-auto px-4 mt-8 flex flex-col gap-8">
         
-        {/* Configuration Panel (Hidden on Print) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 print:hidden">
           
-          {/* Left Col: Content Input */}
           <div className="lg:col-span-7 bg-white rounded-xl shadow-sm p-6 border border-gray-200">
             <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-gray-700">
               <FileText className="w-5 h-5" />
@@ -239,248 +396,293 @@ function App() {
                 onClick={() => setConfig({ ...config, sourceType: 'TEXT' })}
                 className={`pb-2 px-4 font-medium transition-colors ${config.sourceType === 'TEXT' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}
               >
-                <span className="flex items-center gap-2"><BookOpen size={16}/> متن / کتاب</span>
+                <span className="flex items-center gap-2"><BookOpen size={18}/> متن</span>
               </button>
               <button 
                 onClick={() => setConfig({ ...config, sourceType: 'URL' })}
                 className={`pb-2 px-4 font-medium transition-colors ${config.sourceType === 'URL' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}
               >
-                 <span className="flex items-center gap-2"><Link size={16}/> آدرس وب‌سایت</span>
+                <span className="flex items-center gap-2"><Link size={18}/> لینک</span>
               </button>
               <button 
                 onClick={() => setConfig({ ...config, sourceType: 'FILE' })}
                 className={`pb-2 px-4 font-medium transition-colors ${config.sourceType === 'FILE' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}
               >
-                 <span className="flex items-center gap-2"><Upload size={16}/> فایل / عکس</span>
+                <span className="flex items-center gap-2"><Upload size={18}/> فایل (تصویر/کتاب)</span>
               </button>
             </div>
 
-            {config.sourceType === 'TEXT' ? (
-              <div className="space-y-2">
-                <textarea
-                  className="w-full h-64 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all text-sm leading-relaxed"
-                  placeholder="متن کتاب درسی، جزوه یا مطلب خود را اینجا کپی کنید..."
-                  value={config.content}
-                  onChange={(e) => setConfig({ ...config, content: e.target.value })}
-                ></textarea>
-              </div>
-            ) : config.sourceType === 'URL' ? (
-              <div className="space-y-4">
-                <div className="relative">
-                  <Link className="absolute right-3 top-3 text-gray-400 w-5 h-5" />
-                  <input
-                    type="url"
-                    className="w-full p-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                    placeholder="https://example.com/article"
+            <div className="min-h-[200px]">
+                {config.sourceType === 'TEXT' && (
+                    <textarea
+                    className="w-full h-48 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="متن کتاب درسی یا محتوای آموزشی را اینجا وارد کنید..."
                     value={config.content}
                     onChange={(e) => setConfig({ ...config, content: e.target.value })}
-                  />
-                </div>
-                <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800 flex items-start gap-2">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                  <p>
-                    هوش مصنوعی محتوای صفحه را تحلیل می‌کند.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors cursor-pointer relative">
-                      <input 
-                        type="file" 
-                        accept="image/*,application/pdf" 
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                        onChange={handleFileUpload}
-                      />
-                      <ImageIcon className="w-10 h-10 text-gray-400 mb-2" />
-                      <p className="text-sm font-bold text-gray-700">برای بارگذاری کلیک کنید یا فایل را اینجا رها کنید</p>
-                      <p className="text-xs text-gray-500 mt-1">تصاویر (JPG, PNG) یا PDF</p>
-                  </div>
-                  {config.fileData && (
-                      <div className="bg-green-50 p-3 rounded border border-green-200 flex items-center gap-2 text-green-800 text-sm">
-                          <Check size={16} />
-                          <span>فایل با موفقیت انتخاب شد. ({config.content})</span>
-                      </div>
-                  )}
-              </div>
-            )}
+                    />
+                )}
+                {config.sourceType === 'URL' && (
+                    <div className="flex flex-col gap-2">
+                        <input
+                        type="url"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                        placeholder="https://example.com/article"
+                        value={config.content}
+                        onChange={(e) => setConfig({ ...config, content: e.target.value })}
+                        />
+                        <p className="text-xs text-gray-500 mt-2">لینک یک مقاله یا صفحه آموزشی را وارد کنید. هوش مصنوعی محتوای آن را تحلیل خواهد کرد.</p>
+                    </div>
+                )}
+                {config.sourceType === 'FILE' && (
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 flex flex-col items-center justify-center text-gray-500 gap-4 hover:bg-gray-50 transition-colors relative">
+                        <input 
+                            type="file" 
+                            accept="image/*,application/pdf"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            onChange={handleFileUpload}
+                        />
+                        {config.fileData ? (
+                            <div className="flex flex-col items-center text-green-600">
+                                <Check size={40} />
+                                <p className="font-medium">{config.content}</p>
+                                <p className="text-xs mt-1">برای تغییر فایل کلیک کنید</p>
+                            </div>
+                        ) : (
+                            <>
+                                <ImageIcon size={40} className="text-gray-400" />
+                                <p>برای آپلود تصویر یا PDF کلیک کنید یا فایل را اینجا رها کنید</p>
+                                <p className="text-xs text-gray-400">(حداکثر ۱۰ مگابایت)</p>
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
           </div>
 
-          {/* Right Col: Settings */}
-          <div className="lg:col-span-5 bg-white rounded-xl shadow-sm p-6 border border-gray-200 h-fit">
+          <div className="lg:col-span-5 bg-white rounded-xl shadow-sm p-6 border border-gray-200">
             <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-bold flex items-center gap-2 text-gray-700">
-                  <Settings className="w-5 h-5" />
-                  تنظیمات سوالات
+                <Settings className="w-5 h-5" />
+                تنظیمات آزمون
                 </h2>
-                <div className="flex gap-1">
-                    <button 
-                        onClick={handleSaveConfig}
-                        className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
-                        title="ذخیره تنظیمات فعلی"
-                    >
-                        <Save size={18} />
+                <div className="flex gap-2">
+                    <button onClick={handleSaveConfig} className="p-1.5 text-gray-500 hover:text-indigo-600 rounded hover:bg-indigo-50" title="ذخیره تنظیمات">
+                        <Save size={18}/>
                     </button>
-                     <button 
-                        onClick={handleLoadConfig}
-                        className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
-                        title="بازیابی تنظیمات ذخیره شده"
-                    >
-                        <FolderOpen size={18} />
+                    <button onClick={handleLoadConfig} className="p-1.5 text-gray-500 hover:text-indigo-600 rounded hover:bg-indigo-50" title="بازیابی تنظیمات">
+                        <FolderOpen size={18}/>
                     </button>
                 </div>
             </div>
 
-            <div className="space-y-5">
-              
-              {/* Difficulty */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">سطح دشواری آزمون</label>
-                <select 
-                    value={config.difficulty}
-                    onChange={(e) => setConfig({...config, difficulty: e.target.value as Difficulty})}
-                    className="w-full p-2 border rounded-lg text-sm"
-                >
-                    <option value="Easy">آسان</option>
-                    <option value="Medium">متوسط</option>
-                    <option value="Hard">دشوار</option>
-                </select>
-              </div>
-
-              {/* Counters */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-2">تعداد هر نوع سوال</label>
-                <div className="space-y-2 bg-gray-50 p-3 rounded-lg border">
-                    {Object.values(QuestionType).map((type) => (
-                        <div key={type} className="flex items-center justify-between">
-                            <span className="text-sm text-gray-700">{QUESTION_TYPE_LABELS[type]}</span>
-                            <div className="flex items-center border bg-white rounded-md overflow-hidden">
-                                <button 
-                                    onClick={() => updateCount(type, -1)}
-                                    className="px-3 py-1 hover:bg-gray-100 border-l"
-                                >-</button>
-                                <input 
-                                    type="number" 
-                                    className="w-12 text-center text-sm focus:outline-none"
-                                    value={config.questionCounts[type]}
-                                    onChange={(e) => {
-                                        const val = parseInt(e.target.value) || 0;
-                                        setConfig(prev => ({
-                                            ...prev,
-                                            questionCounts: { ...prev.questionCounts, [type]: val }
-                                        }));
-                                    }}
-                                />
-                                <button 
-                                    onClick={() => updateCount(type, 1)}
-                                    className="px-3 py-1 hover:bg-gray-100 border-r"
-                                >+</button>
+            <div className="space-y-6">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">سطح دشواری</label>
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                        {(['Easy', 'Medium', 'Hard'] as Difficulty[]).map((level) => (
+                            <button
+                                key={level}
+                                onClick={() => setConfig({ ...config, difficulty: level })}
+                                className={`flex-1 py-1.5 text-sm rounded-md transition-all ${
+                                    config.difficulty === level 
+                                    ? 'bg-white text-indigo-600 shadow-sm font-bold' 
+                                    : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                            >
+                                {level === 'Easy' ? 'آسان' : level === 'Medium' ? 'متوسط' : 'دشوار'}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">تعداد سوالات ({totalQuestions})</label>
+                    <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                        {(Object.keys(INITIAL_COUNTS) as QuestionType[]).map((type) => (
+                            <div key={type} className="flex items-center justify-between text-sm">
+                                <span className="text-gray-600">{QUESTION_TYPE_LABELS[type]}</span>
+                                <div className="flex items-center border rounded-md bg-gray-50">
+                                    <button 
+                                        onClick={() => updateCount(type, -1)}
+                                        className="w-8 h-8 flex items-center justify-center hover:bg-gray-200 text-gray-600"
+                                    >-</button>
+                                    <span className="w-8 text-center font-medium">{config.questionCounts[type]}</span>
+                                    <button 
+                                        onClick={() => updateCount(type, 1)}
+                                        className="w-8 h-8 flex items-center justify-center hover:bg-gray-200 text-indigo-600"
+                                    >+</button>
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
-                <div className="mt-2 text-left text-xs text-gray-500">
-                    مجموع سوالات: {totalQuestions}
-                </div>
-              </div>
 
-              <button
-                onClick={handleGenerate}
-                disabled={loading}
-                className={`w-full py-3 rounded-lg font-bold text-white shadow-lg transition-all transform active:scale-95 flex justify-center items-center gap-2
-                  ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700'}`}
-              >
-                {loading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    در حال طراحی...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={18} />
-                    طراحی سوالات
-                  </>
-                )}
-              </button>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">تعداد صفحات</label>
+                    <input 
+                        type="number" 
+                        min="1" 
+                        max="10" 
+                        value={config.pageCount} 
+                        onChange={(e) => setConfig({...config, pageCount: parseInt(e.target.value) || 1})}
+                        className="w-full p-2 border rounded"
+                    />
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">فاصله بین سوالات (تراکم)</label>
+                    <input 
+                        type="range" 
+                        min="2" 
+                        max="12" 
+                        step="1"
+                        value={questionSpacing}
+                        onChange={(e) => setQuestionSpacing(parseInt(e.target.value))}
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                        <span>کم</span>
+                        <span>زیاد</span>
+                    </div>
+                </div>
+
+                <button
+                    onClick={handleGenerate}
+                    disabled={loading}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                >
+                    {loading ? (
+                        <>
+                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            در حال طراحی آزمون...
+                        </>
+                    ) : (
+                        <>
+                            <Sparkles className="w-5 h-5" />
+                            طراحی آزمون
+                        </>
+                    )}
+                </button>
             </div>
           </div>
         </div>
-        
+
         {error && (
-            <div className="p-4 bg-red-50 text-red-700 rounded-lg border border-red-200 text-center font-bold">
-                {error}
-            </div>
+          <div className="bg-red-50 border-r-4 border-red-500 p-4 rounded-md flex items-center gap-3 text-red-700 print:hidden">
+            <AlertCircle size={24} />
+            <p>{error}</p>
+          </div>
         )}
 
-        {/* Results Section */}
         {exam && (
-            <div className="animate-fade-in pb-20">
-                 {/* Toolbar */}
-                 <div className="sticky top-0 z-20 bg-gray-800 text-white p-3 rounded-lg shadow-lg mb-6 flex flex-wrap justify-between items-center gap-4 print:hidden">
-                    <div className="flex items-center gap-4">
-                        <h2 className="text-lg font-bold">پیش‌نمایش آزمون</h2>
-                        <div className="bg-gray-700 px-3 py-1 rounded-full text-xs">سایز A4</div>
+          <div className="space-y-6">
+            <div className="flex flex-wrap justify-between items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200 print:hidden sticky top-0 z-20">
+                <div className="flex items-center gap-4">
+                    <h3 className="font-bold text-lg text-gray-800">پیش‌نمایش آزمون</h3>
+                    <div className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium cursor-pointer hover:bg-indigo-100 transition-colors" onClick={() => setIsEditing(!isEditing)}>
+                        <Edit3 size={16} />
+                        {isEditing ? 'خروج از حالت ویرایش' : 'حالت ویرایش'}
                     </div>
-                    
-                    <div className="flex items-center gap-3">
-                        <button 
-                            onClick={() => setIsEditing(!isEditing)}
-                            className={`flex items-center gap-2 px-4 py-2 rounded transition-colors ${isEditing ? 'bg-green-600 hover:bg-green-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-                        >
-                            {isEditing ? <Check size={18}/> : <Edit3 size={18} />}
-                            {isEditing ? 'پایان ویرایش' : 'ویرایش دستی'}
+                    <div className="h-6 w-px bg-gray-300 mx-2"></div>
+                     {/* Add Page Controls */}
+                     <div className="flex items-center gap-2">
+                        <button onClick={() => updatePageCount(1)} className="flex items-center gap-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded">
+                            <FilePlus size={14} /> صفحه
                         </button>
-
-                        {isEditing && (
-                            <div className="flex items-center bg-blue-600 rounded overflow-hidden">
-                                <select 
-                                    value={addQuestionType}
-                                    onChange={(e) => setAddQuestionType(e.target.value as QuestionType)}
-                                    className="bg-blue-700 text-white text-xs p-2 border-none outline-none cursor-pointer hover:bg-blue-800"
-                                >
-                                    {Object.entries(QUESTION_TYPE_LABELS).map(([key, label]) => (
-                                        <option key={key} value={key}>{label}</option>
-                                    ))}
-                                </select>
-                                <button 
-                                    onClick={handleAddQuestion}
-                                    className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white hover:bg-blue-700 transition-colors border-l border-blue-500"
-                                >
-                                    <Plus size={18} />
-                                    افزودن
-                                </button>
-                            </div>
-                        )}
-
-                        <button 
-                            onClick={handlePrint}
-                            className="flex items-center gap-2 px-4 py-2 bg-white text-gray-900 font-bold rounded hover:bg-gray-100 transition-colors"
-                        >
-                            <Printer size={18} />
-                            دانلود PDF / چاپ
+                        <button onClick={() => updatePageCount(-1)} className="flex items-center gap-1 text-sm bg-gray-100 hover:bg-gray-200 text-red-600 px-2 py-1 rounded">
+                            <FileMinus size={14} />
                         </button>
-                    </div>
-                 </div>
-
-                 {/* Visual Feedback for Edit Mode */}
-                 {isEditing && (
-                     <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded flex items-center gap-2 print:hidden">
-                         <Edit3 size={16}/>
-                         شما در حالت ویرایش هستید. با استفاده از دکمه‌های فلش، سوالات را بین صفحات جابجا کنید تا چیدمان مناسب چاپ را بدست آورید.
                      </div>
-                 )}
+                </div>
 
-                 <ExamRenderer 
-                    exam={exam} 
-                    isEditing={isEditing}
-                    onUpdateExam={setExam}
-                    onRegenerateQuestion={handleRegenerateQuestion}
-                    refProp={examRef} 
-                />
+                <div className="flex gap-3">
+                    {isEditing && (
+                        <div className="flex items-center border border-indigo-200 rounded-lg overflow-hidden bg-indigo-50">
+                            <select 
+                                className="bg-transparent text-xs p-2 text-indigo-800 font-medium focus:outline-none border-l border-indigo-200"
+                                value={addQuestionType}
+                                onChange={(e) => setAddQuestionType(e.target.value as QuestionType)}
+                            >
+                                {Object.entries(QUESTION_TYPE_LABELS).map(([val, label]) => (
+                                    <option key={val} value={val}>{label}</option>
+                                ))}
+                            </select>
+                            <button 
+                                onClick={handleAddQuestion}
+                                className="flex items-center gap-1 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 transition-colors"
+                            >
+                                <Plus size={16} /> افزودن سوال
+                            </button>
+                        </div>
+                    )}
+                    
+                    <button 
+                        onClick={handlePreviewPDF}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors shadow-sm"
+                        disabled={isGeneratingPdf}
+                    >
+                        <Eye size={18} />
+                        پیش‌نمایش PDF
+                    </button>
+                    
+                    <button 
+                        onClick={handleDownloadPDF}
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors shadow-sm"
+                        disabled={isGeneratingPdf}
+                    >
+                        <Download size={18} />
+                        {isGeneratingPdf ? 'در حال ایجاد...' : 'دانلود فایل PDF'}
+                    </button>
+                    
+                    <button 
+                        onClick={handlePrint}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white rounded-lg font-medium transition-colors shadow-sm"
+                    >
+                        <Printer size={18} />
+                        چاپ
+                    </button>
+                </div>
             </div>
-        )}
 
+            {/* Exam Renderer */}
+            <ExamRenderer 
+                exam={exam}
+                isEditing={isEditing}
+                onUpdateExam={setExam}
+                onRegenerateQuestion={handleRegenerateQuestion}
+                refProp={examRef}
+                questionSpacing={questionSpacing}
+            />
+          </div>
+        )}
       </main>
+      
+      {/* PDF Preview Modal */}
+      {showPreviewModal && previewUrl && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
+              <div className="bg-white rounded-lg w-full max-w-6xl h-[90vh] flex flex-col relative">
+                  <div className="flex justify-between items-center p-4 border-b">
+                      <h3 className="font-bold text-lg">پیش‌نمایش فایل خروجی</h3>
+                      <button onClick={closePreview} className="p-2 hover:bg-gray-100 rounded-full">
+                          <X size={24} />
+                      </button>
+                  </div>
+                  <div className="flex-grow bg-gray-100 p-4 overflow-hidden">
+                      <iframe 
+                        src={previewUrl} 
+                        className="w-full h-full rounded border shadow-lg" 
+                        title="PDF Preview"
+                      />
+                  </div>
+                  <div className="p-4 border-t flex justify-end gap-3 bg-gray-50">
+                      <button onClick={closePreview} className="px-4 py-2 text-gray-600 font-medium hover:bg-gray-200 rounded">بستن</button>
+                      <button onClick={handleDownloadPDF} className="px-4 py-2 bg-green-600 text-white font-medium rounded hover:bg-green-700 flex items-center gap-2">
+                          <Download size={18} /> دانلود نهایی
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 }

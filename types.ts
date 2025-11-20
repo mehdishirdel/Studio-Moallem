@@ -36,6 +36,7 @@ export interface ExamPaper {
   header: ExamHeader;
   questions: Question[];
   evaluationTable: EvaluationTableItem[];
+  pageCount: number; // Total number of pages to render
 }
 
 export interface GenerationConfig {
@@ -47,4 +48,5 @@ export interface GenerationConfig {
   };
   difficulty: Difficulty;
   questionCounts: Record<QuestionType, number>; // Dictionary of counts
+  pageCount?: number; // Desired number of pages
 }
