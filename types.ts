@@ -18,15 +18,14 @@ export interface Question {
   correctAnswer?: string; 
   learningObjective: string;
   difficulty?: Difficulty;
+  page?: number; // Page number for rendering (starts at 1)
 }
 
 export interface ExamHeader {
   title: string;
   schoolName: string;
-  teacherName: string;
   grade: string;
   durationMinutes: number;
-  totalScore: number;
 }
 
 export interface EvaluationTableItem {
@@ -40,8 +39,12 @@ export interface ExamPaper {
 }
 
 export interface GenerationConfig {
-  sourceType: 'TEXT' | 'URL';
+  sourceType: 'TEXT' | 'URL' | 'FILE';
   content: string;
+  fileData?: {
+    mimeType: string;
+    data: string; // Base64 string
+  };
   difficulty: Difficulty;
   questionCounts: Record<QuestionType, number>; // Dictionary of counts
 }

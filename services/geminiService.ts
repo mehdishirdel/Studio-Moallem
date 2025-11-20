@@ -40,26 +40,25 @@ export const generateExam = async (config: GenerationConfig): Promise<ExamPaper>
     1. Output: Valid JSON only.
     2. Language: Persian.
     3. Content:
-       - Header info.
+       - Header info (School, Course, Grade, Duration).
        - EXACTLY these questions: ${requirements}.
-       - Total score approx 20.
        - Generate a list of 4-6 core 'learning objectives' for the evaluation table.
     
     Difficulty: ${config.difficulty}
   `;
 
-  let finalPrompt = "";
+  let contents: any = "";
   let tools: any[] = [];
   let useSchema = false;
 
   if (config.sourceType === 'URL') {
     tools = [{ googleSearch: {} }];
-    finalPrompt = `
+    contents = `
       Analyze content at: "${config.content}".
       Generate a Persian exam JSON.
       Structure:
       {
-        "header": { "title": "...", "schoolName": "...", "teacherName": "...", "grade": "...", "durationMinutes": 60, "totalScore": 20 },
+        "header": { "title": "...", "schoolName": "...", "grade": "...", "durationMinutes": 60 },
         "questions": [
            { "id": 1, "type": "MULTIPLE_CHOICE", "text": "...", "options": ["..."], "learningObjective": "...", "difficulty": "${config.difficulty}" },
            { "id": 2, "type": "MATCHING", "text": "Connect the related items", "pairs": [{"left": "A", "right": "B"}], ... }
@@ -69,16 +68,35 @@ export const generateExam = async (config: GenerationConfig): Promise<ExamPaper>
         ]
       }
     `;
-  } else {
+  } else if (config.sourceType === 'FILE' && config.fileData) {
+    // Multimodal request for File
     useSchema = true;
-    finalPrompt = `
+    contents = [
+        {
+            inlineData: {
+                mimeType: config.fileData.mimeType,
+                data: config.fileData.data
+            }
+        },
+        {
+            text: `
+                Analyze the provided document/image.
+                Generate a Persian exam JSON based on this content with exactly ${totalQ} questions as requested (${requirements}).
+                If the text is not clear, try to infer from context.
+            `
+        }
+    ];
+  } else {
+    // Text Source
+    useSchema = true;
+    contents = `
       Content: "${config.content.substring(0, 25000)}" 
       Generate exam JSON based on this content with exactly ${totalQ} questions as requested.
     `;
   }
 
   try {
-    const modelName = config.sourceType === 'URL' ? 'gemini-2.5-flash' : 'gemini-2.5-flash';
+    const modelName = 'gemini-2.5-flash';
     
     const requestConfig: any = {
         systemInstruction: systemPrompt,
@@ -99,12 +117,10 @@ export const generateExam = async (config: GenerationConfig): Promise<ExamPaper>
                     properties: {
                         title: { type: Type.STRING },
                         schoolName: { type: Type.STRING },
-                        teacherName: { type: Type.STRING },
                         grade: { type: Type.STRING },
                         durationMinutes: { type: Type.INTEGER },
-                        totalScore: { type: Type.NUMBER },
                     },
-                    required: ["title", "totalScore"]
+                    required: ["title"]
                 },
                 questions: {
                     type: Type.ARRAY,
@@ -147,18 +163,23 @@ export const generateExam = async (config: GenerationConfig): Promise<ExamPaper>
 
     const response = await ai.models.generateContent({
         model: modelName,
-        contents: finalPrompt,
+        contents: contents,
         config: requestConfig
     });
 
     const text = response.text;
     if (!text) throw new Error("No response generated");
 
-    return parseJSONSafe(text) as ExamPaper;
+    const result = parseJSONSafe(text) as ExamPaper;
+
+    // Post-process to assign default page 1
+    result.questions = result.questions.map(q => ({ ...q, page: 1 }));
+    
+    return result;
 
   } catch (error) {
     console.error("Generation Error:", error);
-    throw new Error("Failed to generate exam. Try different content.");
+    throw new Error("Failed to generate exam. Check your input or API key.");
   }
 };
 

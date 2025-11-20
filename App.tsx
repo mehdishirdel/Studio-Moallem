@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { generateExam, regenerateQuestion } from './services/geminiService';
 import { ExamPaper, GenerationConfig, QuestionType, Difficulty, Question } from './types';
 import { ExamRenderer } from './components/ExamRenderer';
-import { BookOpen, Link, FileText, Settings, Printer, Sparkles, AlertCircle, Edit3, Plus, Check, GripVertical, Save, FolderOpen } from 'lucide-react';
+import { BookOpen, Link, FileText, Settings, Printer, Sparkles, AlertCircle, Edit3, Plus, Check, Save, FolderOpen, Upload, Image as ImageIcon } from 'lucide-react';
 
 const INITIAL_COUNTS: Record<QuestionType, number> = {
   [QuestionType.MULTIPLE_CHOICE]: 4,
@@ -35,12 +35,17 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [exam, setExam] = useState<ExamPaper | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [addQuestionType, setAddQuestionType] = useState<QuestionType>(QuestionType.SHORT_ANSWER);
   const examRef = useRef<HTMLDivElement>(null);
 
   const handleGenerate = async () => {
-    if (!config.content.trim()) {
+    if (config.sourceType !== 'FILE' && !config.content.trim()) {
       setError("لطفا متن یا آدرس اینترنتی را وارد کنید.");
       return;
+    }
+    if (config.sourceType === 'FILE' && !config.fileData) {
+        setError("لطفا یک فایل بارگذاری کنید.");
+        return;
     }
     
     const totalQuestions = (Object.values(config.questionCounts) as number[]).reduce((a, b) => a + b, 0);
@@ -75,14 +80,37 @@ function App() {
   const handleAddQuestion = () => {
       if (!exam) return;
       const newId = Math.max(...exam.questions.map(q => q.id), 0) + 1;
-      const newQuestion: Question = {
+      const lastPage = exam.questions.length > 0 ? Math.max(...exam.questions.map(q => q.page || 1)) : 1;
+      
+      let newQuestion: Question = {
           id: newId,
-          type: QuestionType.SHORT_ANSWER,
+          type: addQuestionType,
           text: "سوال جدید...",
-          // score: 2, // Score is manual now
           learningObjective: "هدف آموزشی جدید",
-          difficulty: 'Medium'
+          difficulty: 'Medium',
+          page: lastPage
       };
+
+      // Initialize specific fields based on type
+      switch(addQuestionType) {
+          case QuestionType.MULTIPLE_CHOICE:
+              newQuestion.options = ['گزینه ۱', 'گزینه ۲', 'گزینه ۳', 'گزینه ۴'];
+              break;
+          case QuestionType.MATCHING:
+              newQuestion.pairs = [
+                  {left: 'مورد الف', right: 'گزینه ۱'},
+                  {left: 'مورد ب', right: 'گزینه ۲'}
+              ];
+              newQuestion.text = "موارد مربوطه را به هم وصل کنید.";
+              break;
+          case QuestionType.TRUE_FALSE:
+              newQuestion.text = "این گزاره صحیح است.";
+              break;
+          case QuestionType.FILL_IN_THE_BLANK:
+              newQuestion.text = "........ پایتخت ایران است.";
+              break;
+      }
+
       setExam({
           ...exam,
           questions: [...exam.questions, newQuestion]
@@ -94,28 +122,52 @@ function App() {
       const questionToUpdate = exam.questions.find(q => q.id === qId);
       if (!questionToUpdate) return;
 
-      // Show simple loading indication (could be improved)
       const originalText = questionToUpdate.text;
       const tempQuestions = exam.questions.map(q => q.id === qId ? { ...q, text: "در حال بازنویسی..." } : q);
       setExam({ ...exam, questions: tempQuestions });
 
       try {
-          // Use config content as context context
-          const contextSummary = config.content.substring(0, 500); 
+          const contextSummary = config.sourceType === 'TEXT' ? config.content.substring(0, 500) : "Based on provided file"; 
           const newQ = await regenerateQuestion(questionToUpdate, newDifficulty, contextSummary);
           
           setExam(prev => prev ? ({
               ...prev,
-              questions: prev.questions.map(q => q.id === qId ? { ...newQ, id: qId } : q)
+              questions: prev.questions.map(q => q.id === qId ? { ...newQ, id: qId, page: q.page } : q)
           }) : null);
       } catch (e) {
           console.error(e);
-          // Revert
           setExam(prev => prev ? ({
               ...prev,
               questions: prev.questions.map(q => q.id === qId ? { ...q, text: originalText } : q)
           }) : null);
       }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (file.size > 10 * 1024 * 1024) {
+          setError("حجم فایل نباید بیشتر از ۱۰ مگابایت باشد.");
+          return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+          const base64String = reader.result as string;
+          const base64Data = base64String.split(',')[1];
+          
+          setConfig({
+              ...config,
+              fileData: {
+                  mimeType: file.type,
+                  data: base64Data
+              },
+              content: `File: ${file.name}`
+          });
+          setError(null);
+      };
+      reader.readAsDataURL(file);
   };
 
   const updateCount = (type: QuestionType, delta: number) => {
@@ -195,6 +247,12 @@ function App() {
               >
                  <span className="flex items-center gap-2"><Link size={16}/> آدرس وب‌سایت</span>
               </button>
+              <button 
+                onClick={() => setConfig({ ...config, sourceType: 'FILE' })}
+                className={`pb-2 px-4 font-medium transition-colors ${config.sourceType === 'FILE' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}
+              >
+                 <span className="flex items-center gap-2"><Upload size={16}/> فایل / عکس</span>
+              </button>
             </div>
 
             {config.sourceType === 'TEXT' ? (
@@ -206,7 +264,7 @@ function App() {
                   onChange={(e) => setConfig({ ...config, content: e.target.value })}
                 ></textarea>
               </div>
-            ) : (
+            ) : config.sourceType === 'URL' ? (
               <div className="space-y-4">
                 <div className="relative">
                   <Link className="absolute right-3 top-3 text-gray-400 w-5 h-5" />
@@ -224,6 +282,26 @@ function App() {
                     هوش مصنوعی محتوای صفحه را تحلیل می‌کند.
                   </p>
                 </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 flex flex-col items-center justify-center text-center hover:bg-gray-50 transition-colors cursor-pointer relative">
+                      <input 
+                        type="file" 
+                        accept="image/*,application/pdf" 
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        onChange={handleFileUpload}
+                      />
+                      <ImageIcon className="w-10 h-10 text-gray-400 mb-2" />
+                      <p className="text-sm font-bold text-gray-700">برای بارگذاری کلیک کنید یا فایل را اینجا رها کنید</p>
+                      <p className="text-xs text-gray-500 mt-1">تصاویر (JPG, PNG) یا PDF</p>
+                  </div>
+                  {config.fileData && (
+                      <div className="bg-green-50 p-3 rounded border border-green-200 flex items-center gap-2 text-green-800 text-sm">
+                          <Check size={16} />
+                          <span>فایل با موفقیت انتخاب شد. ({config.content})</span>
+                      </div>
+                  )}
               </div>
             )}
           </div>
@@ -354,13 +432,24 @@ function App() {
                         </button>
 
                         {isEditing && (
-                             <button 
-                                onClick={handleAddQuestion}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                            >
-                                <Plus size={18} />
-                                افزودن سوال
-                            </button>
+                            <div className="flex items-center bg-blue-600 rounded overflow-hidden">
+                                <select 
+                                    value={addQuestionType}
+                                    onChange={(e) => setAddQuestionType(e.target.value as QuestionType)}
+                                    className="bg-blue-700 text-white text-xs p-2 border-none outline-none cursor-pointer hover:bg-blue-800"
+                                >
+                                    {Object.entries(QUESTION_TYPE_LABELS).map(([key, label]) => (
+                                        <option key={key} value={key}>{label}</option>
+                                    ))}
+                                </select>
+                                <button 
+                                    onClick={handleAddQuestion}
+                                    className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white hover:bg-blue-700 transition-colors border-l border-blue-500"
+                                >
+                                    <Plus size={18} />
+                                    افزودن
+                                </button>
+                            </div>
                         )}
 
                         <button 
@@ -377,7 +466,7 @@ function App() {
                  {isEditing && (
                      <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded flex items-center gap-2 print:hidden">
                          <Edit3 size={16}/>
-                         شما در حالت ویرایش هستید. متن‌ها را تغییر دهید، سوالات را حذف کنید یا سطح دشواری هر سوال را جداگانه تغییر دهید.
+                         شما در حالت ویرایش هستید. با استفاده از دکمه‌های فلش، سوالات را بین صفحات جابجا کنید تا چیدمان مناسب چاپ را بدست آورید.
                      </div>
                  )}
 
